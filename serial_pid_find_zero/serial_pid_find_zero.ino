@@ -8,15 +8,16 @@
 		 - if using encoder joystick, clockwise opens (increase pwm) and counterclockwise closes (decreases)
 */
 
-
 #include <ESP32Servo.h>		//https://github.com/madhephaestus/ESP32Servo
 #include <ESP32Encoder.h> //https://github.com/madhephaestus/ESP32Encoder
 
 #define FIND_ZERO 0
 
+//todo: individially define for each motor.
 #define PWM_NEUTRAL 91
 
-#define NUM_JOINTS 1
+// todo: rename. NUM_JOINTS is the number of joints read from the serial monitor
+#define NUM_JOINTS 4
 #define BAUD_RATE 115200
 #define SERIAL_TIMEOUT 20
 // The serial to read signals from. Typically Serial2 for RPi, Serial for USB (helpful for debugging)
@@ -26,6 +27,7 @@
 // Angle where finger is fully closed, as sum of angles of all joints. Min is 0. Max Pi can give is 265.
 #define MAX_ANGLE 200
 
+//todo: figure out why these aren't initialized to zero. 
 int arr1[NUM_JOINTS] = {0};
 int arr2[NUM_JOINTS] = {0};
 int* target_angles = arr1;
@@ -35,8 +37,6 @@ bool readCommand();
 TaskHandle_t getRpiVals;
 //http://exploreembedded.com/wiki/Mutex_Semaphore_02%3A_Recursive_Locks
 SemaphoreHandle_t semRpi = NULL;
-
-double kp, ki, kd;
 
 bool printing;
 
@@ -59,7 +59,8 @@ int32_t longAdjust, longmidAdjust, shortmidAdjust, shortAdjust;
 unsigned long rate;
 unsigned long currentLoopTime, deltaTime;
 
-#define NUM_JOINT_STRUCTS 1
+//todo: rename? this is the number of fingers that get "wired up"
+#define NUM_JOINT_STRUCTS 4
 
 struct JointPin {
 	int encoderA;
@@ -68,7 +69,8 @@ struct JointPin {
 };
 
 struct Joint {
-    double setpoint;
+	double kp, ki, kd;
+	double setpoint;
 	int ticks; // # ticks from start
 	double errSum; // Running total of errors (for integral)
 	double lastErr; // = prevOutput - prevInput (for derivative)
@@ -97,7 +99,7 @@ struct Joint {
 		if(this->lastOutput == PWM_NEUTRAL){
 			this->lastTick = currentLoopTime;
 			return false;
-		} else return currentLoopTime - this->lastTick >= 1200;
+		} else return currentLoopTime - this->lastTick >= 800;
 	}
 	
 	double computePID() {
@@ -108,7 +110,7 @@ struct Joint {
 		double dErr = (error - this->lastErr) / deltaTime;
 
 		/*Compute PID output*/
-		output = PWM_NEUTRAL - kp * error + ki * this->errSum + kd * dErr;
+		output = PWM_NEUTRAL - this->kp * error + this->ki * this->errSum + this->kd * dErr;
 
 		/*Remember some variables for next time*/
 		this->lastErr = error;
@@ -117,12 +119,21 @@ struct Joint {
 	}
 };
 
-Joint index_finger{};
+// Joint index_finger{};
+Joint middle_finger{};
+Joint ring_finger{};
+Joint pinky_finger{};
+Joint thumb_flex{};
 
-Joint joints[NUM_JOINT_STRUCTS] = {index_finger};
+// Joint joints[NUM_JOINT_STRUCTS] = {index_finger, middle_finger};
+Joint joints[NUM_JOINT_STRUCTS] = {middle_finger, ring_finger, pinky_finger, thumb_flex};
 
 const JointPin pins[NUM_JOINT_STRUCTS] = {
-	JointPin{39, 36, 13}
+	// JointPin{35, 34, 12}//, /*DO NOT USE UNTIL BRADY FIXS IT*/
+	JointPin{39, 36, 13}, //middle
+	JointPin{33, 32, 14},  //ring
+	JointPin{26, 25, 27},  //pinky
+	JointPin{21, 19, 22}  //Thumb flex
 };
 
 void setup()
@@ -170,7 +181,11 @@ void setup()
 
 	state = 0;		//intialize state (tracks states in findZero function)
 
-	tunePid(.23, -0.001, 0);
+	//todo: add more to expand to more joints. Cannot customize the PID tunings in a loop. 
+	tunePid(joints[0], .23, -0.001, 0); //middle
+	tunePid(joints[1], .23, -0.001, 0); //ring
+	tunePid(joints[2], .23, -0.001, 0); //pinky
+	tunePid(joints[3], .23, -0.001, 0); //thumb flex
 
 	initSemaphore(semRpi);
 	//function, name, stack in words, input param, priority(higher is higher), task handle, core
@@ -187,7 +202,6 @@ void setup()
 		Serial.println("****zero set****");
 		state = 6;
 	}
-	Serial.println(joints[0].output);
 	delay(5000); // ESCs sing to us
 }
 
@@ -221,7 +235,7 @@ void loop()
 	    
 	    int prevTicks = j.ticks;
 	    j.ticks = j.encoder.getCount();
-	    Serial.println("Ticks:"+String(j.ticks));
+	    // Serial.println("Ticks:"+String(j.ticks));
 	    if(j.ticks != prevTicks){
 	        j.lastTick = currentLoopTime;
 	    }
@@ -242,34 +256,31 @@ void loop()
 	       
 	}
 	
-	//printStatus();
+	printStatus();
 	delay(10);	 //TODO: Make delay a delayUntil and hardcode delta, and consider shortening 
 }
 
 // Only printing for first joint because I don't have time to care about the second.
 void printStatus() {
-	Joint& j = joints[0];
-	Serial.print("PWM:" + String(j.output));
+	for (int i = 0; i < NUM_JOINT_STRUCTS; i++)
+	{
+		Serial.print("\tPWM" + String(i) + ":" + String(joints[i].output));
+	}
 
-	Serial.print("\tPos:" + String((int)j.ticks));
+	for (int i = 0; i < NUM_JOINT_STRUCTS; i++)
+	{
+		Serial.print("\tPos" + String(i) + ":" + String((int)joints[i].ticks));
+	}
 	// Serial.printf("\tRate: %8d", (unsigned long)rate);
 	// Serial.print("\tstate: " + String((int32_t)state));
 	// Serial.print("\tdchng: " + String((int32_t)directionChange));
 
 	// Serial.print("\ttarget angle: " + String(target_angles[0]));
 
-	// TODO: isn't this the same as position?
-	//Serial.print("\tinput:");
-	//Serial.print((double)input);
-	
-	// TODO: isn't this the same as PWM?
-	/*Serial.print(" ");
-	Serial.print("\toutput:");
-	Serial.print((double)output);*/
-	
-	Serial.print("\tSetpoint:");
-	Serial.print(j.setpoint);
-	
+	for(int i=0; i<NUM_JOINT_STRUCTS; i++){
+		Serial.print("\tSetpoint" + String(i) + ":" + String((int)joints[i].setpoint));
+	}
+
 	Serial.println("");
 	// Serial.print("kd*dErr:");
 	// Serial.print((double)(kd * dErr));
@@ -322,11 +333,11 @@ void getRpiValsCode(void *parameter)
 	}
 }
 
-inline void tunePid(double Kp, double Ki, double Kd)
+inline void tunePid(Joint & j, double Kp, double Ki, double Kd)
 {
-	kp = Kp;
-	ki = Ki;
-	kd = Kd;
+	j.kp = Kp;
+	j.ki = Ki;
+	j.kd = Kd;
 }
 
 /**
@@ -342,11 +353,13 @@ inline void tunePid(double Kp, double Ki, double Kd)
 */
 bool readCommand()
 {
-	if (SigSerial.available() <= 0)
+	if (SigSerial.available() <= 0){
 		return false;
+	}
 	String command = SigSerial.readStringUntil('\n');
-	if (!command.startsWith("<") || !command.endsWith(">"))
+	if (!command.startsWith("<") || !command.endsWith(">")){
 		return false;
+	}
 	const char *input = command.c_str() + 1; //Skip opening '<'
 	char *endPtr;
 	int joint = 0;
