@@ -1,7 +1,7 @@
 /* 2021-03-27 Cam King
-	OHSU Helping Hand - finding zero, using saftey nets, and control using encoder as joystick for 1 finger.
+	OHSU Helping Hand - finding zero, using safety nets, and control using encoder as joystick for 1 finger.
 	Notes: - Make sure to add some lube if gears are dry
-		 - if the encoder jumpers fall off immedietly pull the orange pwm wire from the board and restart
+		 - if the encoder jumpers fall off immediately pull the orange pwm wire from the board and restart
 		 - the feedback encoder should have green on top, purple on bottom
 		 - make sure to unplug battery when not using
 		 - if anything seems to be going wrong pull the orange pwm wire so it does not break itself
@@ -163,10 +163,10 @@ void setup()
 		setpoints[i] = 0;
 	}
 
-	// I have no idea what these are
-	longAdjust = 0;
-	longmidAdjust = 7, shortmidAdjust = 5;
-	shortAdjust = 7; //bounds found in state 3 of findZero()
+	// momentum adjustments for state 3 in findZero()
+	// longAdjust = 0;
+	// longmidAdjust = 7, shortmidAdjust = 5;
+	// shortAdjust = 7; 
 
 	state = 0;		//intialize state (tracks states in findZero function)
 
@@ -291,7 +291,8 @@ void initSemaphore(SemaphoreHandle_t sem)
 // Seperate function in case method changes
 // Given an angle from the Pi, find what the setpoint should be (in units of encoder position)
 inline int toSetpoint(int angle){
-	return min(angle, MAX_ANGLE) * maxPos / MAX_ANGLE;
+	// return min(angle, MAX_ANGLE) * maxPos / MAX_ANGLE;
+	return angle;
 }
 
 inline void takeSem(){
