@@ -243,7 +243,7 @@ void loop()
 	}
 	
 	//printStatus();
-	delay(100);	 //TODO: Make delay a delayUntil and hardcode delta, and consider shortening 
+	delay(10);	 //TODO: Make delay a delayUntil and hardcode delta, and consider shortening 
 }
 
 // Only printing for first joint because I don't have time to care about the second.
