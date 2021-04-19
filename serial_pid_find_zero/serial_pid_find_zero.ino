@@ -170,7 +170,7 @@ void setup()
 
 	state = 0;		//intialize state (tracks states in findZero function)
 
-	tunePid(.23, -0.001, 0);
+	tunePid(.15, -0.001, 0);
 
 	initSemaphore(semRpi);
 	//function, name, stack in words, input param, priority(higher is higher), task handle, core
