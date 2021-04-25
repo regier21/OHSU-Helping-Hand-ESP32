@@ -71,6 +71,8 @@ unsigned long currentTick;
 void setup()
 {
 	Serial.begin(115200);
+	// SigSerial.begin(115200);
+
 	ESP32Encoder::useInternalWeakPullResistors = DOWN;
 	encoder.attachSingleEdge(23, 22);
 	encoder.setCount(PWM_NEUTRAL);
@@ -123,6 +125,7 @@ void loop()
 	pos5 = feedback5.getCount();
 	currentTick = millis();
 	rate = currentTick - lastTick;
+	Serial.print("~91 is neutral.\t");
 	Serial.println("PWM:" + String(angles[0])
 		+ " PWM2:" + String(angles[1])
 		+ " PWM3:" + String(angles[2])
