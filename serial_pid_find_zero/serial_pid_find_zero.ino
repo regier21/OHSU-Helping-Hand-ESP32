@@ -8,6 +8,9 @@
 		 - if using encoder joystick, clockwise opens (increase pwm) and counterclockwise closes (decreases)
 */
 
+// 0 or 1. 0 for the ESP to control the fingers, 1 for the ESP to control the wrist
+#define ESP 0
+
 #include <ESP32Servo.h>		//https://github.com/madhephaestus/ESP32Servo
 #include <ESP32Encoder.h> //https://github.com/madhephaestus/ESP32Encoder
 
@@ -17,7 +20,12 @@
 #define PWM_NEUTRAL 91
 
 // todo: rename. NUM_JOINTS is the number of joints read from the serial monitor
+#if ESP == 0
 #define NUM_JOINTS 5
+#else
+#define NUM_JOINTS 3
+#endif
+
 #define BAUD_RATE 115200
 #define SERIAL_TIMEOUT 20
 // The serial to read signals from. Typically Serial2 for RPi, Serial for USB (helpful for debugging)
@@ -81,10 +89,7 @@ enum print_type_t
 };
 print_type_t print_type; 
 
-//todo: rename? this is the number of fingers that get "wired up"
-#define NUM_JOINT_STRUCTS 5
-
-	struct JointPin {
+struct JointPin {
 	int encoderA;
 	int encoderB;
 	int esc;
@@ -101,14 +106,23 @@ struct Joint {
 	int lastOutput;
 	ESP32Encoder encoder;
 	Servo esc;
+	boolean reverseBounds = false;
 	
 	bool checkBounds() {
 	    //Safety Net: once zero is found, has bounds from positions 0 (fully extended) & 110 (fully closed)
 	    //	*Note: Because the springs are helping to close the finger there is no noticable metric to identify
 	    //	when resisting closure, however as long as the gear position stays as low as 110 the fishing
 	    //	line does not tangle i.e. slack doesn't become an issue.
-	    if ((this->ticks > 85 && this->output <= PWM_NEUTRAL) ||
-			(this->ticks < 0 && this->output >= PWM_NEUTRAL))
+	    bool pushOutOfBounds;
+	    if (!reverseBounds) {
+			pushOutOfBounds = (this->ticks > 85 && this->output < PWM_NEUTRAL) 
+	    		|| (this->ticks < 0 && this->output > PWM_NEUTRAL);
+	    } else {
+	    	pushOutOfBounds = (this->ticks > 85 && this->output > PWM_NEUTRAL) 
+	    		|| (this->ticks < 0 && this->output < PWM_NEUTRAL);
+	    }
+	    
+	    if (pushOutOfBounds)
 	    {
 		    this->output = PWM_NEUTRAL;
 		    return false;
@@ -139,23 +153,49 @@ struct Joint {
 
 		return output;
 	}
+
+	inline void tunePid(double Kp, double Ki, double Kd)
+	{
+		this->kp = Kp;
+		this->ki = Ki;
+		this->kd = Kd;
+	}
 };
 
-Joint index_finger{};
-Joint middle_finger{};
-Joint ring_finger{};
-Joint little_finger{};
-Joint thumb_flex{};
+#if ESP == 0
+	//todo: rename? this is the number of fingers that get "wired up"
+	#define NUM_JOINT_STRUCTS 5
+	
+	Joint index_finger{};
+	Joint middle_finger{};
+	Joint ring_finger{};
+	Joint little_finger{};
+	Joint thumb_flex{};
+	
+	Joint joints[NUM_JOINT_STRUCTS] = {index_finger, middle_finger, ring_finger, little_finger, thumb_flex};
+	
+	const JointPin pins[NUM_JOINT_STRUCTS] = {
+		JointPin{35, 34, 12}, //index 
+		JointPin{39, 36, 13}, //middle
+		JointPin{33, 32, 14},  //ring
+		JointPin{26, 25, 27},  //little
+		JointPin{21, 19, 22}  //Thumb flex
+	};
+#else //ESP == 1
+	#define NUM_JOINT_STRUCTS 3
 
-Joint joints[NUM_JOINT_STRUCTS] = {index_finger, middle_finger, ring_finger, little_finger, thumb_flex};
+	Joint wrist_left{};
+	Joint wrist_right{};
+	Joint thumb_ab_ad{};
 
-const JointPin pins[NUM_JOINT_STRUCTS] = {
-	JointPin{35, 34, 12}, //index 
-	JointPin{39, 36, 13}, //middle
-	JointPin{33, 32, 14},  //ring
-	JointPin{26, 25, 27},  //little
-	JointPin{21, 19, 22}  //Thumb flex
-};
+	Joint joints[NUM_JOINT_STRUCTS] = {wrist_left, wrist_right, thumb_ab_ad};
+
+	const JointPin pins[NUM_JOINT_STRUCTS] = {
+		JointPin{39, 36, 13},
+		JointPin{35, 34, 12},
+		JointPin{32, 33, 14}
+	};
+#endif
 
 void setup()
 {
@@ -203,13 +243,20 @@ void setup()
 
 	state = 0;		//intialize state (tracks states in findZero function)
 
-	//todo: add more to expand to more joints. Cannot customize the PID tunings in a loop.
-
-	tunePid(joints[0], .23, -0.001, 0); //index
-	tunePid(joints[1], .23, -0.001, 0); //middle
-	tunePid(joints[2], .23, -0.001, 0); //ring
-	tunePid(joints[3], .23, -0.001, 0); //little
-	tunePid(joints[4], .23, 0, 0); //thumb flex
+#if ESP == 0
+	joints[0].tunePid(.23, -0.001, 0); //index
+	joints[1].tunePid(.23, -0.001, 0); //middle
+	joints[2].tunePid(.23, -0.001, 0); //ring
+	joints[3].tunePid(.23, -0.001, 0); //little
+	joints[4].tunePid(.23, 0, 0); //thumb flex
+#else
+	joints[0].tunePid(-.18, 0.00001, 0); //wrist left
+	joints[0].reverseBounds = true;
+	joints[1].tunePid(-.18, 0.00001, 0); //wrist right
+	joints[1].reverseBounds = true;
+	joints[2].tunePid(-.26, 0.00005, 0); //thumb ab ad
+	joints[2].reverseBounds = true;
+#endif
 
 	initSemaphore(semRpi);
 	//function, name, stack in words, input param, priority(higher is higher), task handle, core
@@ -227,6 +274,7 @@ void setup()
 		state = 6;
 	}
 	delay(10000); // ESCs sing to us
+	currentLoopTime = millis();
 }
 
 void loop()
@@ -286,17 +334,17 @@ void loop()
 
 // Only printing for first joint because I don't have time to care about the second.
 void printStatus() {
-	Serial.print("0 is neutral.\t");
+	Serial.print("0 is neutral. ");
 
 	if(print_type == print_all){
 		for (int i = 0; i < NUM_JOINT_STRUCTS; i++)
 		{
-			Serial.print("\tPWM" + String(i) + ":" + String(joints[i].output));
+			Serial.print(" PWM" + String(i) + ":" + String(joints[i].output));
 		}
 
 		for (int i = 0; i < NUM_JOINT_STRUCTS; i++)
 		{
-			Serial.print("\tPos" + String(i) + ":" + String((int)joints[i].ticks));
+			Serial.print(" Pos" + String(i) + ":" + String((int)joints[i].ticks));
 		}
 		// Serial.printf("\tRate: %8d", (unsigned long)rate);
 		// Serial.print("\tstate: " + String((int32_t)state));
@@ -305,7 +353,7 @@ void printStatus() {
 		// Serial.print("\ttarget angle: " + String(target_angles[0]));
 
 		for(int i=0; i<NUM_JOINT_STRUCTS; i++){
-			Serial.print("\tSetpoint" + String(i) + ":" + String((int)joints[i].setpoint));
+			Serial.print(" Setpoint" + String(i) + ":" + String((int)joints[i].setpoint));
 		}
 
 		Serial.println("");
@@ -331,11 +379,11 @@ void printStatus() {
 			return;
 		}
 
-		Serial.print("\tPWM" + String(finger_num) + ":" + String(joints[finger_num].output));
+		Serial.print(" PWM" + String(finger_num) + ":" + String(joints[finger_num].output));
 
-		Serial.print("\tPos" + String(finger_num) + ":" + String((int)joints[finger_num].ticks));
+		Serial.print(" Pos" + String(finger_num) + ":" + String((int)joints[finger_num].ticks));
 
-		Serial.print("\tSetpoint" + String(finger_num) + ":" + String((int)joints[finger_num].setpoint));
+		Serial.print(" Setpoint" + String(finger_num) + ":" + String((int)joints[finger_num].setpoint));
 
 		Serial.println("");
 	}
@@ -386,12 +434,7 @@ void getRpiValsCode(void *parameter)
 	}
 }
 
-inline void tunePid(Joint & j, double Kp, double Ki, double Kd)
-{
-	j.kp = Kp;
-	j.ki = Ki;
-	j.kd = Kd;
-}
+
 
 /**
 	 Reads command from SigSerial.
@@ -509,8 +552,12 @@ command_type readPidTunings(String command)
 		"\tki: " + String(pid_vals[1]/(-1000)) + 
 		"\tkd: " + String(pid_vals[2]));
 
-	tunePid(joints[joint_num], pid_vals[0]/100, -pid_vals[1]/1000, pid_vals[2]); //middle
-
+	#if ESP==0
+		joints[joint_num].tunePid(pid_vals[0]/100, -pid_vals[1]/10000, pid_vals[2]); 
+	#else
+		joints[joint_num].tunePid(-pid_vals[0]/100, pid_vals[1]/10000, -pid_vals[2]); 	
+	#endif
+	
 	return tune_pid;
 }
 
